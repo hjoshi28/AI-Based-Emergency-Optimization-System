@@ -1,234 +1,241 @@
 # 🚑 AI-Based Emergency Ambulance Dispatch & Hospital Optimization System
 
-An intelligent emergency response system that uses **A\* Search** to route ambulances optimally through a city road network and **Constraint Satisfaction Problem (CSP)** solving to assign the best available hospital — all visualized in a real-time Streamlit dashboard.
+A Python and Streamlit application that dispatches ambulances through a simulated city road network and assigns each patient to a suitable hospital. It combines classical AI techniques: **A\* search**, **Dijkstra's algorithm**, a **Constraint Satisfaction Problem (CSP)** solver, **Mamdani fuzzy logic** and a **Bayesian network**.
 
-## Features
-
-### Emergency Dispatch
-- **Nearest Ambulance Selection** — Runs A\* search from every available ambulance to the emergency location and picks the one with the lowest travel cost
-- **Optimal Hospital Assignment** — Uses CSP to filter hospitals by bed availability, ICU requirement, doctor count, capacity limit and road reachability, then picks the one with the lowest A* road cost (straight-line distance is only a tie-breaker)
-- **Full Route Planning** — Computes two legs: ambulance → emergency, then emergency → hospital, with combined total cost
-- **Pre-defined Scenarios** — Four ready-to-run emergency cases (heart attack, car accident, fall injury, stroke) for quick testing
-
-### A\* Search Algorithm
-- Classic f(n) = g(n) + h(n) implementation where h(n) is Euclidean distance (admissible heuristic)
-- Tracks every node expansion and edge exploration for step-by-step visualization
-- Includes a **Dijkstra baseline** (A\* without heuristic) shown in the dashboard for both route legs: costs must match, nodes expanded show the heuristic's savings
-- Metrics: nodes expanded, path cost, execution time
-
-### CSP Hospital Optimizer
-- Five hard constraints applied in sequence with full domain reduction:
-  - **C1** — Available beds > 0
-  - **C2** — ICU available (only if required)
-  - **C3** — Doctors available > 0
-  - **C4** — Occupied beds < capacity limit (limit is below total beds in the sample data, so it is independent of C1)
-  - **C5** — Hospital reachable by road from the emergency location
-- Remaining hospitals are ordered by A* route cost (same effective weights as routing); Euclidean distance breaks ties
-- If no hospital is feasible, the dashboard explains which constraint emptied the domain
-
-### Hospital Management
-- Live capacity dashboard with occupancy indicators (🟢 / 🟡 / 🔴)
-- Update beds, doctors, and ICU availability per hospital in real time
-
-### System Administration
-- **Randomize traffic** — Assigns random traffic multipliers (1.0×–3.0×) to all roads
-- **Reset traffic** — Clears all roads back to 1.0×
-- **Manual road control** — Adjust traffic factor on individual roads via slider
-- Color-coded road map: green (clear), orange (moderate), red (heavy)
-
-### Visualizations
-- City road network with hospitals, ambulances, and emergency location highlighted
-- A\* exploration map (explored nodes + edges) vs. final optimal path side-by-side
-- CSP domain reduction bar chart
-- CSP backtracking flowchart with color-coded step statuses
-- CSP constraints table
-- CSP final assignment table (assigned / valid / rejected per hospital)
+> **Simulation notice:** this is an educational simulation. Traffic, rain and accident inputs are **simulated** (set by the user or randomised in the UI), and the Bayesian probabilities are **manually specified, not trained on real data**. The system does not use live traffic, weather or accident feeds.
 
 ---
 
-## Technologies Used
+## Table of Contents
 
-- Streamlit
-- NetworkX
-- Matplotlib
-- NumPy
-- Python 3.8+
-- A\* Search
-- Dijkstra's Algorithm
-- Constraint Satisfaction Problem (CSP) with Backtracking + MRV heuristic
+- [Features](#features)
+- [How It Works](#how-it-works)
+- [Project Structure](#project-structure)
+- [Installation](#installation)
+- [Using the Dashboard](#using-the-dashboard)
+- [Sample Data](#sample-data)
+- [Algorithm Details](#algorithm-details)
+- [Testing](#testing)
+- [Limitations](#limitations)
+- [Tech Stack](#tech-stack)
+- [License](#license)
+
+---
+
+## Features
+
+- **Nearest-ambulance selection:** runs A\* from every available ambulance to the emergency and picks the lowest-cost route.
+- **CSP hospital assignment:** filters hospitals by beds, ICU, doctors, capacity limit and road reachability, then picks the one with the lowest road cost. Straight-line distance is only a tie-breaker.
+- **Two-leg route planning:** ambulance → emergency, then emergency → hospital, with a combined total cost.
+- **Dijkstra baseline:** both route legs are compared against Dijkstra on the same weights. Costs must match, and the dashboard shows how many nodes A\*'s heuristic saves.
+- **Fuzzy logic congestion model (optional):** turns a road's traffic factor and a simulated speed ratio into a congestion score that becomes a cost multiplier.
+- **Bayesian road-risk model (optional):** estimates the probability that a road is blocked from traffic level, simulated rain and simulated accidents.
+- **Independent toggles:** fuzzy and Bayesian features can be switched on and off separately. With both off, the original `distance × traffic_factor` cost is restored exactly.
+- **Live system state:** a committed dispatch marks the ambulance busy and admits the patient, so later dispatches see the updated fleet and hospital capacity.
+- **Rich visualisations:** city map, A\* exploration, CSP domain reduction, backtracking steps, constraint table and final assignment table.
+- **Edge-case handling:** no available ambulance, unreachable emergency, no feasible hospital and an unreachable hospital (with fallback to the next best) all produce clear messages.
+
+---
+
+## How It Works
+
+```mermaid
+flowchart TD
+    A[Emergency input<br/>location, severity, ICU needed] --> B[A* from each available ambulance<br/>to emergency]
+    B -->|none available / no path| X1[Show error]
+    B --> C[Select lowest-cost ambulance]
+    C --> D[CSP hospital selection<br/>C1 beds, C2 ICU, C3 doctors,<br/>C4 capacity, C5 road reachability]
+    D -->|domain empty| X2[Explain which constraint failed]
+    D --> E[Rank survivors by A* road cost<br/>tie-break: straight-line distance]
+    E --> F[A* route: emergency to hospital]
+    F --> G[Dijkstra baseline for both legs<br/>costs must match]
+    G --> H[Optionally commit state:<br/>ambulance busy, bed and doctor used]
+```
+
+### Road cost
+
+Every search (A\*, Dijkstra and the CSP's reachability and ranking) reads the same effective edge weights:
+
+```
+effective_weight = base_distance × congestion_factor × risk_factor
+```
+
+| Fuzzy | Bayesian | `congestion_factor` | `risk_factor` |
+|:-----:|:--------:|---------------------|---------------|
+| off | off | raw `traffic_factor` | 1.0 |
+| on | off | fuzzy-derived | 1.0 |
+| off | on | raw `traffic_factor` | `1 + penalty × P(blocked)` |
+| on | on | fuzzy-derived | `1 + penalty × P(blocked)` |
+
+With both features off, this reduces to the original `weight = base_distance × traffic_factor`.
+
+---
+
+## Project Structure
+
+```
+.
+├── app.py                      # Streamlit dashboard and dispatch workflow
+├── requirements.txt
+├── algorithms/
+│   ├── astar.py                # A*, Dijkstra, A*/Dijkstra comparison helper
+│   ├── csp.py                  # Hospital-selection CSP (C1–C5, road-cost ordering)
+│   ├── fuzzy_logic.py          # Mamdani fuzzy congestion model
+│   ├── bayesian_reasoning.py   # Bayesian road-blockage model
+│   └── cost_integration.py     # Combines fuzzy + Bayesian into edge weights
+├── models/
+│   ├── city_graph.py           # NetworkX-backed road network
+│   ├── hospital.py             # Hospital resources and capacity rules
+│   └── ambulance.py            # Ambulance state
+├── data/
+│   └── city_data.py            # Sample city, hospitals, ambulances, traffic helpers
+├── visualization/
+│   ├── graph_viz.py            # Map, A* exploration, A*/Dijkstra comparison
+│   └── csp_viz.py              # CSP charts and tables
+└── tests/
+    ├── test_fuzzy_bayesian.py  # Fuzzy, Bayesian, cost integration, integration tests
+    └── test_dispatch_fixes.py  # Optimality, CSP, state and dashboard regression tests
+```
 
 ---
 
 ## Installation
 
-### Prerequisites
-- Python 3.8 or higher
-- pip
-
-### Steps
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd "AI-Based Emergency Ambulance Dispatch & Hospital Optimization System"
-   ```
-
-2. **Create and activate a virtual environment** (recommended)
-   ```bash
-   # Windows
-   python -m venv venv
-   venv\Scripts\activate
-
-   # macOS / Linux
-   python -m venv venv
-   source venv/bin/activate
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Run the application**
-   ```bash
-   streamlit run app.py
-   ```
-
-5. Open your browser at `http://localhost:8501`
-
----
-
-## AI-Enhanced Routing Features
-
-### Fuzzy Logic — Traffic Congestion Estimation
-
-**What it does:** Uses Mamdani-style fuzzy inference with centroid defuzzification to estimate a traffic congestion severity score (0–100) from the existing road `traffic_factor` data. This replaces the raw traffic multiplier with a fuzzy-derived cost factor for more nuanced congestion modeling.
-
-**Inputs:**
-| Input | Source | Range |
-|-------|--------|-------|
-| `traffic_factor` | Existing road data from CityGraph edges | 1.0–3.0 |
-| `speed_ratio` | **Simulated** — derived as `1.0 / traffic_factor` | 0.0–1.0 |
-
-> **Note:** `speed_ratio` is not from a real data source. The project does not measure actual vehicle speeds. It is derived from the traffic factor as a reasonable proxy.
-
-**Membership Functions (all triangular):**
-
-| Variable | Category | Triangle (a, b, c) |
-|----------|----------|---------------------|
-| Traffic Density | LOW | (0.5, 1.0, 1.8) |
-| Traffic Density | MEDIUM | (1.2, 2.0, 2.8) |
-| Traffic Density | HIGH | (2.2, 3.0, 3.5) |
-| Speed Ratio | SLOW | (-0.3, 0.0, 0.5) |
-| Speed Ratio | MODERATE | (0.2, 0.5, 0.8) |
-| Speed Ratio | FAST | (0.5, 1.0, 1.3) |
-| Congestion | LOW | (0, 10, 35) |
-| Congestion | MEDIUM | (20, 45, 65) |
-| Congestion | HIGH | (50, 70, 85) |
-| Congestion | VERY_HIGH | (75, 90, 100) |
-
-**Fuzzy Rules:**
-1. IF traffic\_density is LOW → congestion is LOW
-2. IF traffic\_density is MEDIUM → congestion is MEDIUM
-3. IF traffic\_density is HIGH → congestion is HIGH
-4. IF traffic\_density is HIGH AND speed is SLOW → congestion is VERY\_HIGH
-5. IF traffic\_density is MEDIUM AND speed is SLOW → congestion is HIGH
-6. IF traffic\_density is LOW AND speed is FAST → congestion is LOW
-
-**Output:** Congestion score (0–100) → converted to cost factor (1.0–3.0).
-
----
-
-### Bayesian Reasoning — Road Risk Estimation
-
-**What it does:** Uses a small Bayesian Network with exact enumeration inference to estimate the probability that a road is blocked, given uncertain evidence (weather, accidents, traffic level).
-
-**Bayesian Network Structure:**
-```
-Rain ──┐
-       ├──→ Road_Blocked
-Accident ─┤
-           │
-Traffic_Level ─┘
-```
-
-**Evidence Variables:**
-| Variable | States | Source |
-|----------|--------|--------|
-| Rain | True / False | **Simulated** — toggled via UI checkbox |
-| Accident | True / False | **Simulated** — toggled via UI checkbox |
-| Traffic Level | low / medium / high | Derived from existing `traffic_factor` |
-
-> **Note:** Rain and accident evidence are simulated inputs. The project has no real weather feed or accident reporting system.
-
-**Conditional Probability Tables (manually specified, NOT trained):**
-
-Prior probabilities:
-- P(Rain) = 0.20
-- P(Accident) = 0.05
-
-P(Traffic\_Level | Rain):
-
-| Rain | P(low) | P(medium) | P(high) |
-|------|--------|-----------|---------|
-| True | 0.15 | 0.35 | 0.50 |
-| False | 0.50 | 0.35 | 0.15 |
-
-P(Road\_Blocked | Rain, Accident, Traffic\_Level): see `algorithms/bayesian_reasoning.py` for full table.
-
-**Output:** Posterior P(blocked | evidence) → converted to risk factor (≥ 1.0).
-
----
-
-### How Both Models Affect Road Costs
-
-The processing pipeline is:
-
-```
-Existing road data → Fuzzy Logic → Bayesian Reasoning → Effective Cost → A* Routing
-```
-
-**Cost Formula:**
-```
-effective_cost = base_distance × congestion_factor × risk_factor
-```
-
-Where:
-- `base_distance` = Euclidean distance between nodes (unchanged)
-- `congestion_factor` = fuzzy-derived (replaces raw `traffic_factor` to avoid double-counting)
-- `risk_factor` = `1.0 + penalty_weight × P(blocked | evidence)`
-
-When both features are **disabled**, the formula reduces to the original: `base_distance × traffic_factor`.
-
----
-
-### How to Enable / Disable
-
-1. Navigate to **⚙️ System Administration**
-2. Scroll to **🧠 AI-Enhanced Routing**
-3. Expand **⚙️ Fuzzy Logic & Bayesian Reasoning Settings**
-4. Toggle checkboxes for each feature
-5. When Bayesian is enabled, configure evidence (Rain, Accident) and Risk Penalty Weight
-6. Dispatch an ambulance from the **🆘 Emergency Dispatch** tab to see the effect
-
-Both features default to **disabled** — the original routing behavior is preserved until you explicitly enable them.
-
----
-
-## Running Tests
+**Requirements:** Python 3.8 or newer (developed and tested on 3.12) and `pip`.
 
 ```bash
-# Direct execution
-python tests/test_fuzzy_bayesian.py
+# 1. Clone
+git clone https://github.com/<your-username>/AI-Based-Emergency-Optimization-System.git
+cd AI-Based-Emergency-Optimization-System
 
-# Using pytest (if installed)
-python -m pytest tests/test_fuzzy_bayesian.py -v
+# 2. (Recommended) create a virtual environment
+python -m venv venv
+source venv/bin/activate        # macOS / Linux
+venv\Scripts\activate           # Windows
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Run
+streamlit run app.py
 ```
 
-Tests cover:
-- **Fuzzy Logic**: Low/medium/high traffic → appropriate scores, range validation, determinism, invalid inputs
-- **Bayesian Reasoning**: Probability bounds, evidence impact, determinism, missing evidence
-- **Cost Integration**: Backward compatibility, feature toggling, non-negative weights
-- **System Integration**: A* routing, CSP hospital assignment, feature enable/disable roundtrip
+Then open <http://localhost:8501>.
 
 ---
+
+## Using the Dashboard
+
+### 🆘 Emergency Dispatch
+1. Pick a ready-made scenario or choose the emergency **location**, **severity** and whether an **ICU** is required.
+2. Leave **Commit dispatch** ticked to mark the chosen ambulance busy and admit the patient, or untick it for a dry run that changes nothing.
+3. Click **DISPATCH AMBULANCE**. You will see, in order:
+   - the selected ambulance and the A\* exploration;
+   - the A\* vs Dijkstra comparison for leg 1;
+   - the assigned hospital, its route and the total cost;
+   - the A\* vs Dijkstra comparison for leg 2;
+   - the CSP constraint table, domain reduction, backtracking steps and final assignment.
+
+### 🏥 Hospital Management
+View beds, doctors, ICU status, occupancy and capacity limit for each hospital, and edit them to see how decisions change.
+
+### ⚙️ System Administration
+- **Traffic:** randomise all roads, reset them to 1.0×, or set individual roads manually (1.0×–3.0×).
+- **AI-Enhanced Routing:** toggle Fuzzy Logic and Bayesian Reasoning independently. For Bayesian, tick simulated *Rain* and *Accident* evidence and set the risk penalty weight. A live inspector shows the fuzzy score and blockage probability for any traffic value.
+- **Fleet:** see ambulance status, **Release All Ambulances**, or **Reset Fleet & Hospitals to Defaults**.
+
+> The sample data has three available ambulances. With **Commit dispatch** on, a fourth dispatch reports "No ambulances available" until you release them.
+
+---
+
+## Sample Data
+
+A 20-intersection city (nodes `A`–`T`) with 36 roads.
+
+| Hospital | Node | Total beds | Available | ICU | Doctors | Capacity limit |
+|----------|:----:|:----------:|:---------:|:---:|:-------:|:--------------:|
+| City General Hospital | C | 50 | 12 | ✅ | 8 | 45 |
+| St. Mary's Medical Center | H | 30 | 5 | ✅ | 4 | 27 |
+| Emergency Care Hospital | N | 40 | 15 | ❌ | 6 | 36 |
+| National Trauma Center | P | 60 | 20 | ✅ | 10 | 54 |
+| Westside Clinic | E | 20 | 3 | ❌ | 2 | 18 |
+
+| Ambulance | Start node | Status |
+|-----------|:----------:|--------|
+| AMB-01 | A | Available |
+| AMB-02 | J | Available |
+| AMB-03 | T | Available |
+| AMB-04 | M | Busy |
+
+---
+
+## Algorithm Details
+
+### A\* and Dijkstra
+- A\* uses `f(n) = g(n) + h(n)` with straight-line distance as `h`. This is admissible because every effective weight is at least the straight-line distance (traffic factors are ≥ 1.0).
+- Dijkstra is the same search with `h = 0`. Both use a priority queue with lazy deletion, so an improved path to a node already queued is always re-queued, and stale entries are skipped.
+- The results are checked against NetworkX's shortest path in the test suite.
+
+### CSP hospital selection
+- **Variable:** the hospital assigned to this emergency. **Domain:** all hospitals.
+- **Constraints:**
+
+  | ID | Constraint |
+  |----|------------|
+  | C1 | `available_beds > 0` |
+  | C2 | ICU available (only when required) |
+  | C3 | `doctors_available > 0` |
+  | C4 | `occupied_beds < capacity_limit` |
+  | C5 | Reachable by road from the emergency |
+
+- Remaining values are ordered by A\* route cost (so traffic, fuzzy and Bayesian settings influence the choice), with straight-line distance, then name, as tie-breakers.
+- If the domain empties, the dashboard states which constraint removed the last candidate.
+
+### Fuzzy logic (Mamdani)
+- **Inputs:** `traffic_factor` (1.0–3.0) and a **simulated** `speed_ratio = 1 / traffic_factor`. No real speeds are measured.
+- **Membership functions:** triangular. Six rules combine traffic density (low / medium / high) and speed (slow / moderate / fast).
+- **Output:** centroid-defuzzified congestion score (0–100), mapped linearly to a factor of `1.0 + score / 50`.
+- Because the centroid never reaches the extremes, the practical range is roughly **1.3× (clear road) to 2.5× (heaviest traffic)** rather than 1.0×–3.0×. Enabling fuzzy logic therefore changes costs even on empty roads.
+
+### Bayesian road risk
+- **Network:** `Rain → Traffic_Level`, and `Rain`, `Accident` and `Traffic_Level` → `Road_Blocked`.
+- **Evidence:** rain and accident come from UI checkboxes (**simulated**). Traffic level (low / medium / high) is derived from the road's traffic factor.
+- **Inference:** exact enumeration, fully deterministic.
+- **CPTs:** hand-written priors `P(Rain) = 0.20` and `P(Accident) = 0.05` plus tables in `algorithms/bayesian_reasoning.py`. They encode plausible assumptions and are **not learned from data**.
+- **Output:** `risk_factor = 1 + penalty_weight × P(blocked | evidence)`.
+
+---
+
+## Testing
+
+```bash
+python tests/test_fuzzy_bayesian.py    # 36 tests
+python tests/test_dispatch_fixes.py    # 13 tests
+# or, with pytest installed:
+python -m pytest tests -v
+```
+
+The suite covers:
+
+- **Routing optimality:** A\* and Dijkstra cost equals NetworkX's shortest path across random traffic and all four fuzzy/Bayesian combinations.
+- **Feature effects:** fuzzy and Bayesian change costs, and disabling both restores the original behaviour.
+- **CSP:** every constraint enforced against an independent oracle, road-cost selection, unreachable-hospital fallback, capacity limit independent of beds, and empty-domain explanations.
+- **Dashboard logic** (Streamlit stubbed, so it runs headless): all scenarios, state commit versus dry run, A\*/Dijkstra comparison output, figure cleanup, and every error path.
+
+---
+
+## Limitations
+
+- **Simulated inputs only.** There are no live traffic, weather or accident integrations, and `speed_ratio` is derived from the traffic factor.
+- **Bayesian CPTs are manual** and illustrative, not calibrated.
+- **Severity is not used** in choosing an ambulance or hospital. It is captured as input only.
+- **Single-patient, static model.** Ambulances do not move after dispatch, and patients are never discharged automatically.
+- **Traffic factors below 1.0** set through code (not the UI slider) would break A\*'s admissibility guarantee.
+- The unreachable-hospital path is covered by automated tests only. The UI has no control for removing roads.
+
+---
+
+## Tech Stack
+
+[Streamlit](https://streamlit.io/) · [NetworkX](https://networkx.org/) · [Matplotlib](https://matplotlib.org/) · [NumPy](https://numpy.org/) · Python 3
+
